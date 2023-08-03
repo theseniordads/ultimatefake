@@ -23,6 +23,9 @@
 	; see in "includes/PC1LOAD.S". Then, when we were putting this demo together, we
 	; thought: "Why bother converting all the PC1 files to PI1, and then compressing them,
 	; when now we can just use the PC1 files directly?".
+*  	; Notice we don't save the VBL. That's because we don't need to use it! That has an
+	; interesting side effect: try moving the mouse around the screen while the demo is
+	; still running...
 
 * All new comments are preceded by '<-'.
 
@@ -37,14 +40,14 @@
 	include	includes\genmacro.s
 	include	includes\musmac.s
 
-random macro
+random macro							; <- Interesting! It appears we have a pseudo-random number generator!
 	move.w	old_random,\1
 	mulu.w	#$3141,\1
 	subq.l	#1,\1
 	move.w	\1,old_random
 	endm
 
-	pea		main
+	pea		main						; <- We run the "main" routine in supervisor mode.
 	move.w	#38,-(sp)
 	trap	#14
 	addq.l	#6,sp
@@ -52,78 +55,81 @@ random macro
 	trap	#1
 
 main:
-	getphys		oldphys
+	getphys		oldphys					; <- Save the current screen addresses.
 	getlog		oldlog
-	getrez_st	oldrez
-	setrez_st	#0,#-1,#-1
-	lea			senior_music,a0
+	getrez_st	oldrez					; <- Save the current screen resolution.
+	setrez_st	#0,#-1,#-1				; <- Set the screen resolution to ST-low.
+	lea			senior_music,a0			; <- Start up the Senior Dads fanfare!
 	bsr			start_music
-	move.w		timer.w,d0
+	move.w		timer.w,d0				; Wait a VBL (?).
 .loop	
 	cmp.w		timer.w,d0
 	beq.s		.loop
 
-	lea			intro_pic,a0
-	move.l		$44e.w,a1
-	lea			c16regs.w,a2
-	lea			colour_cycles,a3
-	bsr			depack_pc1
-	wait_clicks	#(320*2)-1
+	lea			intro_pic,a0			; <- Load the "Senior Dads present..." screen PC1 file.
+	move.l		$44e.w,a1				; <- Get the address of the screen.
+	lea			c16regs.w,a2			; <- Get the address of the colour registers.
+	lea			colour_cycles,a3		; <- Where to save the colour cycles. (Err, we don't use them!)
+	bsr			depack_pc1				; <- Decompress the PC1 file AND set the colours!
+	wait_clicks	#(320*2)-1				; <- Wait for a bit. (Each 'click' is 1/50th of a second, in timing with the music.)
 
-	move.l		#screen,d0
-	clr.b		d0
-	lea			gem_pic,a0
-	move.l		d0,a1
-	lea			colour_palette,a2
-	lea			colour_cycles,a3
-	bsr			depack_pc1
+	move.l		#screen,d0				; <- We set our own screen in the memory above this code.
+	clr.b		d0						; <- ... However on the ST, the address of the screen needs to be on a 256 byte boundry. (We add 256 bytes *before* that address so the screen doesn't overwrite our code!)
+	lea			gem_pic,a0				; <- Load the "GEM" screen PC1 file.
+	move.l		d0,a1					; <- Set our screen as the destination.
+	lea			colour_palette,a2		; <- Set the colour palette to go to our buffer. We'll use this later!
+	lea			colour_cycles,a3		; <- Where to save the colour cycles. (Err, still don't use them!)
+	bsr			depack_pc1				; <- Decompress the PC1 file to where our new screen is.
 
-	set_vidaddr	a1
-	set_clicks	#100
-	lea			16regs.w,a0
+	set_vidaddr	a1						; <- Set the screen address to our new screen.
+	set_clicks	#100					; <- Set the number of clicks to wait to 100. (2 seconds)
+	lea			16regs.w,a0				; <- Now we're going to mess with the colour registers!
 .flash1	
-	random		d0
-	move.w		d0,(a0)+
-	cmpa.l		#$ffff8260,a0
-	blt.s		.no_reset
-	lea			c16regs.w,a0
+	random		d0						; <- Get a "random" number.
+	move.w		d0,(a0)+				; <- Set the register for the current colour to that number, and move onto the next colour!
+	cmpa.l		#$ffff8260,a0			; <- If we've not reached the end of the colour registers...
+	blt.s		.no_reset				; <- ... continue the loop, ...
+	lea			c16regs.w,a0			; <- ... otherwise, reset the pointer to the start of the colour registers.
 .no_reset
-	if_not_endclicks.s	.flash1
+	if_not_endclicks.s	.flash1			; <- Keep the loop going until we've waited 2 seconds.
 
-	bsr			go_palette
-	wait_clicks	#5
-	move.w		(a0),4(a0)
+	bsr			go_palette				; <- Change the colours to the colour pallette from the "GEM" screen.
+	wait_clicks	#5						; <- Wait for just long enough for a quick-witted person to there's TWO titles onscreen!
+	move.w		(a0),4(a0)				; <- Change the colour registers so that there's only the pre-title onscreen. (Remember a0 still points to the colour registers!)
 	move.w		2(a0),6(a0)
-	wait_clicks	#200
+	wait_clicks	#200					; <- Wait for 4 seconds.
 
-	bsr			go_palette
-	wait_clicks	#25
-	move.w	(a0),2(a0)
+	bsr			go_palette				; <- Change the colours back to the "GEM" screen colours. (Two titles onscreen again!)
+	wait_clicks	#25						; <- Wait for half a second (So the user can see the two titles!)
+	move.w	(a0),2(a0)					; <- Change the colour registers so that there's only the main title onscreen.
 	move.w	4(a0),6(a0)
 	wait_clicks	#250
 
-	bsr			go_palette
-	wait_clicks	#5
-	clr.l		2(a0)
+	bsr			go_palette				; <- Change the colours back to the "GEM" screen colours. (Two titles again!)
+	wait_clicks	#5						; <- Wait for a tenth of a second. (Did the user spot this one?)
+	clr.l		2(a0)					; <- Set the two titles to black.
 	clr.l		6(a0)
-	wait_clicks	#5
+	wait_clicks	#5						; <- Wait for a bit.
 
-	bsr			stop_music
-	setrez_st	oldrez,oldphys,oldlog
-	rts
+	bsr			stop_music				; <- Stop the music.
+	setrez_st	oldrez,oldphys,oldlog	; <- Restore the screen resolution.
+	rts									; <- Return to the "emulated" desktop. (Albiet with different colours!)
 
+* <- This sets the colour registers to the palette from the "GEM" screen.
 go_palette:
-	lea			c16regs.w,a0
+	lea			c16regs.w,a0			; <- We don't actually need to do this, as a0 still points to the colour registers anyway!
 	movem.l		colour_palette,d0-d7
 	movem.l		d0-d7,(a0)
 	rts
+
+* <- Here, we include the code for the music player and the PC1 decompressor.
 
 	include	includes/musplay.s
 	include	includes/pc1load.s
 
 	even
 intro_pic		incbin	graphics/senior1.pc1		; <- The Senior Dads logo by Jackson Pollock
-	even
+	even											; <- (Have to do this after each PC1 file, as there's no guarantee that the file will be an even number of bytes!)
 gem_pic			incbin	graphics/gem.pc1			; <- "GEM Desktop Emulator" title screen (Also by JP)
 	even
 senior_music	incbin	sound/senior.thk			; <- "Senior Dads Fanfare" by Dame Vera Lynn
@@ -137,8 +143,9 @@ oldlog			ds.l	1
 colour_cycles	ds.w	16
 colour_palette	ds.w	16
 
-	ds.b	256
+	ds.b	256					; <- We need to add 256 bytes before the start of the screen address so that it can start on a 256 byte boundry, but not overwrite our code.
 	even
-screen	ds.b	32000
+screen	ds.b	32000			; <- The screen buffer. (320x200 in 4 bitplanes = ~32K)
+	even
 
 * End of code.
